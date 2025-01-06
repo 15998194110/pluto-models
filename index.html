@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <title>3D Interactive World</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background-color: transparent;
+            color: #ffffff;
+            font-family: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", "Helvetica", "Arial", sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100%;
+            height: 100vh;
+            background: transparent;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 999999;
+            pointer-events: auto;
+        }
+
+        #info {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1;
+            pointer-events: none;
+            opacity: 1;
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+
+        #info.hidden {
+            opacity: 0;
+            transform: translate(-50%, -60%);
+        }
+
+        #logo {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            color: #ffffff;
+            z-index: 2;
+            font-weight: 600;
+        }
+
+        #menu {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 2;
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+
+        #menu.hidden {
+            opacity: 0;
+            transform: translate(-50%, 20px);
+        }
+
+        .menu-item {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 30px;
+            color: #ffffff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .menu-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        h1 {
+            font-size: 64px;
+            line-height: 1.1;
+            font-weight: 700;
+            margin-bottom: 20px;
+            background: linear-gradient(180deg, #ffffff 0%, #88ccff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p {
+            font-size: 24px;
+            line-height: 1.5;
+            color: #88ccff;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        @media only screen and (max-width: 734px) {
+            h1 {
+                font-size: 40px;
+            }
+            
+            p {
+                font-size: 18px;
+                padding: 0 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="logo">3D WORLD</div>
+    <div id="info">
+        <h1>探索3D世界</h1>
+        <p>在这片广阔的空间中，发现独特的互动体验</p>
+    </div>
+    <div id="menu">
+        <div class="menu-item">开始探索</div>
+        <div class="menu-item">了解更多</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.159.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.159.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+
+        const clock = new THREE.Clock();
+        const container = document.getElementById('container');
+        let score = 0;
+        let particles = [];
+        let floatingObjects = [];
+        let composer;
+        let lastCheckTime = 0;
+        let lastDistance = 0;
+        const checkInterval = 100;
+        const centerScreen = new THREE.Vector2(0, 0);
+        const raycaster = new THREE.Raycaster();
+
+        // 创建分数显示
+        const scoreDiv = document.createElement('div');
+        scoreDiv.style.position = 'fixed';
+        scoreDiv.style.top = '20px';
+        scoreDiv.style.right = '20px';
+        scoreDiv.style.fontSize = '24px';
+        scoreDiv.style.color = '#88ccff';
+        scoreDiv.style.fontWeight = 'bold';
+        scoreDiv.style.zIndex = '100';
+        scoreDiv.style.opacity = '0';
+        scoreDiv.textContent = '分数: 0';
+        document.body.appendChild(scoreDiv);
+
+        // 创建渲染器
+        const renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            powerPreference: "high-performance",
+            stencil: false,
+            alpha: true  // 启用透明
+        });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setClearColor(0x000000, 0); // 设置透明背景
+        container.appendChild(renderer.domElement);
+
+        // 环境设置
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        pmremGenerator.compileEquirectangularShader();
+
+        // 创建场景
+        const scene = new THREE.Scene();
+        scene.background = null; // 移除背景色
+        scene.fog = null; // 移除雾效果
+        
+        // 创建环境贴图
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+        const environmentMap = cubeTextureLoader
+            .setPath('https://threejs.org/examples/textures/cube/MilkyWay/')
+            .load([
+                'dark-s_px.jpg', 'dark-s_nx.jpg',
+                'dark-s_py.jpg', 'dark-s_ny.jpg',
+                'dark-s_pz.jpg', 'dark-s_nz.jpg'
+            ]);
+        scene.environment = environmentMap;
+
+        // 创建相机
+        const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 100);
+        camera.position.set(5, 2, 8);
+
+        // 后期处理
+        composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            0.5,  // 强度
+            0.4,  // 半径
+            0.85  // 阈值
+        );
+        composer.addPass(bloomPass);
+
+        const fxaaPass = new ShaderPass(FXAAShader);
+        fxaaPass.material.uniforms['resolution'].value.x = 1 / (window.innerWidth * renderer.getPixelRatio());
+        fxaaPass.material.uniforms['resolution'].value.y = 1 / (window.innerHeight * renderer.getPixelRatio());
+        composer.addPass(fxaaPass);
+
+        // 添加灯光
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+        directionalLight.position.set(5, 5, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 500;
+        directionalLight.shadow.normalBias = 0.02;
+        scene.add(directionalLight);
+
+        // 添加点光源
+        const pointLight = new THREE.PointLight(0x88ccff, 1, 10);
+        pointLight.position.set(0, 2, 0);
+        scene.add(pointLight);
+
+        // 创建主要几何体
+        const geometry = new THREE.TorusKnotGeometry(1, 0.3, 200, 32);
+        const material = new THREE.MeshPhysicalMaterial({ 
+            metalness: 1.0,
+            roughness: 0.0,
+            transmission: 0.0,
+            reflectivity: 1.0,
+            envMap: environmentMap,
+            envMapIntensity: 2.0,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.0
+        });
+        const torusKnot = new THREE.Mesh(geometry, material);
+        torusKnot.castShadow = true;
+        torusKnot.receiveShadow = true;
+        scene.add(torusKnot);
+
+        // 修改浮动物体创建函数
+        function createFloatingObject() {
+            const geometries = [
+                new THREE.IcosahedronGeometry(0.3, 1),
+                new THREE.OctahedronGeometry(0.3, 2),
+                new THREE.TorusGeometry(0.2, 0.1, 16, 100)
+            ];
+            
+            const material = new THREE.MeshPhysicalMaterial({
+                metalness: 1.0,
+                roughness: 0.0,
+                transmission: 0.0,
+                reflectivity: 1.0,
+                envMap: environmentMap,
+                envMapIntensity: 2.0,
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.0
+            });
+            
+            const geometry = geometries[Math.floor(Math.random() * geometries.length)];
+            const mesh = new THREE.Mesh(geometry, material);
+            
+            // 使用更复杂的数学函数生成位置
+            const t = Math.random() * Math.PI * 2;
+            const radius = 5;
+            mesh.position.x = radius * Math.sin(t) * Math.cos(t);
+            mesh.position.y = radius * Math.sin(t * 2);
+            mesh.position.z = radius * Math.cos(t) * Math.sin(t);
+            
+            const noise = new THREE.Vector3(
+                Math.sin(t * 3.7),
+                Math.cos(t * 4.3),
+                Math.sin(t * 5.1)
+            ).normalize();
+            
+            mesh.userData.velocity = noise.multiplyScalar(0.02);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            
+            scene.add(mesh);
+            floatingObjects.push(mesh);
+        }
+
+        // 修改粒子效果
+        function createParticles(position, color) {
+            const particleCount = 50;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const velocities = new Float32Array(particleCount * 3);
+            const scales = new Float32Array(particleCount);
+            
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                positions[i3] = position.x;
+                positions[i3 + 1] = position.y;
+                positions[i3 + 2] = position.z;
+                
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 0.2 + Math.random() * 0.3;
+                velocities[i3] = Math.cos(angle) * speed;
+                velocities[i3 + 1] = (Math.random() - 0.5) * speed;
+                velocities[i3 + 2] = Math.sin(angle) * speed;
+                
+                scales[i] = Math.random() * 0.1 + 0.05;
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+            geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 1));
+            
+            const particleMaterial = new THREE.PointsMaterial({
+                color: color,
+                size: 0.1,
+                transparent: true,
+                opacity: 1,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            const particleSystem = new THREE.Points(geometry, particleMaterial);
+            particleSystem.userData.life = 1.0;
+            scene.add(particleSystem);
+            particles.push(particleSystem);
+        }
+
+        // 更新粒子系统
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                const positions = particle.geometry.attributes.position.array;
+                const velocities = particle.geometry.attributes.velocity.array;
+                
+                for (let j = 0; j < positions.length; j += 3) {
+                    positions[j] += velocities[j];
+                    positions[j + 1] += velocities[j + 1];
+                    positions[j + 2] += velocities[j + 2];
+                    
+                    velocities[j + 1] -= 0.001; // 重力
+                }
+                
+                particle.geometry.attributes.position.needsUpdate = true;
+                particle.userData.life -= 0.02;
+                particle.material.opacity = particle.userData.life;
+                
+                if (particle.userData.life <= 0) {
+                    scene.remove(particle);
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // 修改动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+            
+            // 更复杂的主体动画
+            torusKnot.rotation.x = Math.sin(time * 0.5) * 0.2;
+            torusKnot.rotation.y = time * 0.5;
+            torusKnot.position.y = Math.sin(time) * 0.2;
+            
+            // 更新点光源位置
+            pointLight.position.x = Math.sin(time) * 3;
+            pointLight.position.z = Math.cos(time) * 3;
+            
+            updateFloatingObjects();
+            updateParticles();
+            
+            controls.update();
+            composer.render();
+        }
+
+        // 修改控制器设置
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 0.5, 0);
+        controls.update();
+        controls.enablePan = false;
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.rotateSpeed = 0.5;
+        controls.zoomSpeed = 0.8;
+        controls.minDistance = 3;
+        controls.maxDistance = 10;
+
+        // 添加滚轮事件监听
+        function onWheel(event) {
+            const deltaY = event.deltaY;
+            const now = Date.now();
+            
+            // 计算当前相机距离
+            const currentDistance = camera.position.distanceTo(controls.target);
+            
+            // 检测快速滚动
+            if (Math.abs(deltaY) > 50 && now - lastCheckTime > checkInterval) {
+                // 从屏幕中心发射射线
+                raycaster.setFromCamera(centerScreen, camera);
+                const intersects = raycaster.intersectObjects(floatingObjects);
+                
+                if (intersects.length > 0 && Math.abs(currentDistance - lastDistance) > 0.5) {
+                    const object = intersects[0].object;
+                    createParticles(object.position, object.material.color);
+                    scene.remove(object);
+                    floatingObjects = floatingObjects.filter(obj => obj !== object);
+                    score += 100;
+                    scoreDiv.textContent = `分数: ${score}`;
+                    
+                    // 创建新的浮动物体
+                    setTimeout(createFloatingObject, 1000);
+                    
+                    lastCheckTime = now;
+                }
+            }
+            
+            lastDistance = currentDistance;
+        }
+
+        window.addEventListener('wheel', onWheel);
+
+        // 修改浮动物体行为
+        function updateFloatingObjects() {
+            floatingObjects.forEach(obj => {
+                // 更缓慢的移动
+                obj.position.add(obj.userData.velocity);
+                obj.rotation.x += 0.005;
+                obj.rotation.y += 0.005;
+                
+                // 当物体在视线中心附近时发光
+                const screenPosition = obj.position.clone().project(camera);
+                const distanceToCenter = Math.sqrt(screenPosition.x * screenPosition.x + screenPosition.y * screenPosition.y);
+                
+                if (distanceToCenter < 0.1) {
+                    if (obj.material.emissive) {
+                        obj.material.emissive.setHex(0x88ccff);
+                        obj.material.emissiveIntensity = 1.0;
+                    }
+                    obj.scale.setScalar(1.2);
+                } else {
+                    if (obj.material.emissive) {
+                        obj.material.emissiveIntensity = 0.2;
+                    }
+                    obj.scale.setScalar(1.0);
+                }
+                
+                // 边界检查
+                if (obj.position.length() > 8) {
+                    obj.position.normalize().multiplyScalar(8);
+                    obj.userData.velocity.multiplyScalar(-1);
+                }
+            });
+        }
+
+        // 初始化浮动物体
+        for (let i = 0; i < 10; i++) {
+            createFloatingObject();
+        }
+
+        // 窗口大小调整
+        window.addEventListener('resize', onWindowResize, false);
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 添加游戏说明
+        const instructionDiv = document.createElement('div');
+        instructionDiv.style.position = 'fixed';
+        instructionDiv.style.bottom = '20px';
+        instructionDiv.style.left = '50%';
+        instructionDiv.style.transform = 'translateX(-50%)';
+        instructionDiv.style.color = '#88ccff';
+        instructionDiv.style.fontSize = '16px';
+        instructionDiv.style.textAlign = 'center';
+        instructionDiv.style.zIndex = '100';
+        instructionDiv.innerHTML = '移动视角将目标置于屏幕中心<br>快速滚动滚轮击碎目标';
+        document.body.appendChild(instructionDiv);
+
+        // 修改开始探索事件
+        document.querySelectorAll('.menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                if (item.textContent === '开始探索') {
+                    // 隐藏欢迎界面
+                    document.getElementById('info').classList.add('hidden');
+                    document.getElementById('menu').classList.add('hidden');
+                    instructionDiv.style.opacity = '1';
+                    scoreDiv.style.opacity = '1';
+
+                    // 添加相机动画
+                    const startPosition = camera.position.clone();
+                    const targetPosition = new THREE.Vector3(3, 1, 4);
+                    const duration = 2000;
+                    const startTime = Date.now();
+
+                    function animateCamera() {
+                        const currentTime = Date.now();
+                        const elapsed = currentTime - startTime;
+                        const progress = Math.min(elapsed / duration, 1);
+                        const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+                        camera.position.lerpVectors(startPosition, targetPosition, easeProgress);
+                        controls.target.lerp(new THREE.Vector3(0, 0, 0), easeProgress);
+                        controls.update();
+
+                        if (progress < 1) {
+                            requestAnimationFrame(animateCamera);
+                        }
+                    }
+
+                    animateCamera();
+
+                    // 一段时间后移除元素
+                    setTimeout(() => {
+                        document.getElementById('info').style.display = 'none';
+                        document.getElementById('menu').style.display = 'none';
+                    }, 800);
+                }
+            });
+        });
+
+        // 开始动画循环
+        animate();
+    </script>
+</body>
+</html> 
